@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebBrush Flow - GPU Art Demo</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background: #0a0a0a; 
+            font-family: 'Courier New', monospace;
+        }
+        canvas { 
+            display: block; 
+            width: 100vw; 
+            height: 100vh; 
+            cursor: crosshair;
+        }
+        #info { 
+            position: absolute; 
+            top: 20px; 
+            left: 20px; 
+            color: #00ffff; 
+            font-size: 13px;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+            pointer-events: none;
+            line-height: 1.6;
+        }
+        #info strong {
+            color: #ff00ff;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="info">
+        <strong>WebBrush Flow</strong> | GPU-Accelerated Procedural Art<br>
+        Drag to paint flowing particle trail (right-click to save image)<br>
+        <span style="font-size: 11px; opacity: 0.7;">Parallel compute shaders • Real-time particle simulation</span>
+    </div>
+    <script>
+        // Get canvas and WebGL context
+        const canvas = document.getElementById('canvas');
+        const gl = canvas.getContext('webgl', { 
+            alpha: false,
+            antialias: false,
+            preserveDrawingBuffer: false
+        });
+        if (!gl) { 
+            alert('WebGL not supported'); 
+            throw new Error('WebGL not supported');
+        }
+
+        // Vertex shader (full-screen quad for fragment shader)
+        const vsSource = `
+            attribute vec2 a_position;
+            void main() {
+                gl_Position = vec4(a_position, 0.0, 1.0);
+            }
+        `;
+
+        // Fragment shader (procedural brush effect with improved noise)
+        const fsSource = `
+            precision highp float;
+            uniform vec2 u_resolution;
+            uniform float u_time;
+            uniform vec2 u_mouse;
+            uniform vec2 u_prevMouse;
+            uniform int u_painting;
+            uniform int u_holding;
+            uniform float u_holdDuration;
+            uniform sampler2D u_texture;
+            
+            // Improved 2D noise with smoother interpolation
+            vec2 hash(vec2 p) {
+                p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+                return fract(sin(p) * 43758.5453);
+            }
+            
+            float noise(vec2 p) {
+                vec2 i = floor(p);
+                vec2 f = fract(p);
+                vec2 u = f * f * (3.0 - 2.0 * f); // Smoothstep
+                
+                float a = dot(hash(i + vec2(0.0, 0.0)), f - vec2(0.0, 0.0));
+                float b = dot(hash(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+                float c = dot(hash(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0));
+                float d = dot(hash(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
+                
+                return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 0.5 + 0.5;
+            }
+            
+            // Fractal noise (multiple octaves)
+            float fbm(vec2 p) {
+                float value = 0.0;
+                float amplitude = 0.5;
+                float frequency = 1.0;
+                
+                for(int i = 0; i < 4; i++) {
+                    value += amplitude * noise(p * frequency);
+                    frequency *= 2.0;
+                    amplitude *= 0.5;
+                }
+                return value;
+            }
+            
+            void main() {
+                vec2 uv = gl_FragCoord.xy / u_resolution;
+                vec2 pixelSize = 1.0 / u_resolution;
+                
+                // Create velocity field for autonomous trail movement with more variation
+                vec2 flowField1 = uv * 4.0 + u_time * 0.12;
+                vec2 flowField2 = uv * 3.0 - u_time * 0.08;
+                float flowNoise1 = fbm(flowField1);
+                float flowNoise2 = fbm(flowField1 + vec2(5.3, 1.3));
+                
+                // Add secondary flow layer for more interesting motion
+                float flowNoise3 = fbm(flowField2 + vec2(2.1, 8.4));
+                float flowNoise4 = fbm(flowField2 - vec2(6.7, 3.2));
+                
+                // Combine flow layers for richer, more varied movement
+                float flow1 = mix(flowNoise1, flowNoise3, 0.5);
+                float flow2 = mix(flowNoise2, flowNoise4, 0.5);
+                
+                // Velocity vector from noise (creates calm but varied swirling motion)
+                vec2 velocity = vec2(
+                    flow1 * 2.0 - 1.0,
+                    flow2 * 2.0 - 1.0
+                ) * pixelSize * 3.5; // Increased from 2.5 to 3.5 for more movement
+                
+                // Add subtle directional bias that changes over time (creates larger-scale flow)
+                vec2 globalFlow = vec2(
+                    sin(u_time * 0.15 + uv.y * 2.0),
+                    cos(u_time * 0.12 + uv.x * 2.0)
+                ) * pixelSize * 0.8;
+                
+                velocity += globalFlow;
+                
+                // Dark seekers: detect if this is a dark area and find nearby bright targets
+                float currentBrightness = length(texture2D(u_texture, uv).rgb);
+                vec2 seekVelocity = vec2(0.0);
+                
+                if (currentBrightness < 0.25) {
+                    // This is a dark area - search for bright targets
+                    float maxBrightness = 0.0;
+                    vec2 brightestDirection = vec2(0.0);
+                    
+                    // Search in expanding radius for bright areas
+                    for(float radius = 3.0; radius <= 12.0; radius += 3.0) {
+                        for(float angle = 0.0; angle < 6.28; angle += 0.524) { // 12 directions
+                            vec2 searchPos = uv + vec2(cos(angle), sin(angle)) * pixelSize * radius;
+                            if (searchPos.x >= 0.0 && searchPos.x <= 1.0 && searchPos.y >= 0.0 && searchPos.y <= 1.0) {
+                                vec3 searchColor = texture2D(u_texture, searchPos).rgb;
+                                float searchBrightness = length(searchColor);
+                                
+                                // Found a bright target
+                                if (searchBrightness > maxBrightness && searchBrightness > 0.5) {
+                                    maxBrightness = searchBrightness;
+                                    brightestDirection = normalize(searchPos - uv);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Move toward brightest target with intensity based on target brightness
+                    if (maxBrightness > 0.5) {
+                        float seekStrength = maxBrightness * 1.5;
+                        seekVelocity = brightestDirection * pixelSize * seekStrength;
+                    }
+                }
+                
+                // Combine natural flow with seeking behavior
+                velocity = mix(velocity, seekVelocity, 0.6);
+                
+                // Sample from offset position to create motion
+                vec2 sourceUV = uv - velocity;
+                
+                // Ensure we're sampling within bounds
+                sourceUV = clamp(sourceUV, vec2(0.0), vec2(1.0));
+                
+                vec4 color = texture2D(u_texture, sourceUV);
+                
+                // Enhanced diffusion effect - but reduce diffusion in very dark areas
+                vec4 blur = vec4(0.0);
+                float total = 0.0;
+                float sourceBrightness = length(color.rgb);
+                
+                // Larger sampling radius for more diffusion with motion
+                for(float x = -2.0; x <= 2.0; x++) {
+                    for(float y = -2.0; y <= 2.0; y++) {
+                        float dist = length(vec2(x, y));
+                        float weight = exp(-dist * 0.5); // Gaussian-like falloff
+                        vec2 offset = vec2(x, y) * pixelSize * 1.5;
+                        vec2 sampleUV = sourceUV + offset;
+                        sampleUV = clamp(sampleUV, vec2(0.0), vec2(1.0));
+                        vec4 sample = texture2D(u_texture, sampleUV);
+                        
+                        // Reduce weight for dark samples to prevent glow from bleeding into darkness
+                        float sampleBright = length(sample.rgb);
+                        if (sampleBright < 0.2 && sourceBrightness > 0.4) {
+                            weight *= 0.3; // Don't let bright areas bleed into dark voids
+                        }
+                        
+                        blur += sample * weight;
+                        total += weight;
+                    }
+                }
+                color = blur / total;
+                
+                // Trail interaction - subtle color shift only, no brightness gain
+                float intensity = length(color.rgb);
+                
+                // Check for darkness propagation - aggressive spreading
+                // Sample neighbors to detect darkened regions spreading
+                float neighborDarkness = 0.0;
+                int darkNeighbors = 0;
+                float totalNeighborBrightness = 0.0;
+                
+                for(float angle = 0.0; angle < 6.28; angle += 0.785) { // 8 directions
+                    vec2 checkPos = uv + vec2(cos(angle), sin(angle)) * pixelSize * 3.0;
+                    checkPos = clamp(checkPos, vec2(0.0), vec2(1.0));
+                    vec3 neighborColor = texture2D(u_texture, checkPos).rgb;
+                    float neighborBright = length(neighborColor);
+                    float neighborMax = max(max(neighborColor.r, neighborColor.g), neighborColor.b);
+                    
+                    totalNeighborBrightness += neighborBright;
+                    
+                    // Detect if neighbor is a darkened area (very low brightness)
+                    if (neighborBright < 0.25 && neighborMax < 0.3) {
+                        darkNeighbors++;
+                        neighborDarkness += 1.0;
+                    }
+                }
+                
+                float avgNeighborBrightness = totalNeighborBrightness / 8.0;
+                
+                // Aggressive darkness spread - even one dark neighbor starts the spread
+                if (darkNeighbors >= 1 && intensity > 0.1) {
+                    // Stronger darkening based on number of dark neighbors
+                    float darkenSpread = (float(darkNeighbors) / 8.0) * 0.35;
+                    
+                    // Extra darkening if most neighbors are dark
+                    if (darkNeighbors >= 4) {
+                        darkenSpread *= 1.5;
+                    }
+                    
+                    // Darkness consumes light
+                    color.rgb *= (1.0 - darkenSpread);
+                    
+                    // Also reduce based on average neighbor darkness
+                    if (avgNeighborBrightness < 0.3) {
+                        color.rgb *= 0.92;
+                    }
+                }
+                
+                if (intensity > 0.15) {
+                    // Very subtle color evolution (not brightness) with spatial independence
+                    vec2 flowCoord = uv * 8.0 + u_time * 0.15;
+                    float flow = fbm(flowCoord);
+                    
+                    // Create spatial phase variation so different regions evolve independently
+                    vec2 spatialPhase = uv * 10.0;
+                    float phaseX = noise(spatialPhase) * 6.28;
+                    float phaseY = noise(spatialPhase + vec2(7.3, 2.1)) * 6.28;
+                    float phaseZ = noise(spatialPhase - vec2(3.4, 8.9)) * 6.28;
+                    
+                    // Subtle hue shift with independent spatial phases
+                    vec3 evolutionShift = vec3(
+                        sin(u_time * 0.3 + intensity * 3.14 + phaseX) * 0.008,
+                        cos(u_time * 0.4 + intensity * 2.0 + phaseY) * 0.008,
+                        sin(u_time * 0.5 - intensity * 1.5 + phaseZ) * 0.008
+                    );
+                    
+                    // Add per-region time offset for more independence
+                    float timeOffset = noise(floor(uv * 15.0)) * 10.0;
+                    evolutionShift *= 1.0 + sin(u_time * 0.2 + timeOffset) * 0.3;
+                    
+                    // Normalize to maintain brightness
+                    float currentBrightness = intensity;
+                    color.rgb += evolutionShift * intensity;
+                    float newBrightness = length(color.rgb);
+                    if (newBrightness > 0.0) {
+                        color.rgb *= currentBrightness / newBrightness;
+                    }
+                    
+                    // Trails interact when they meet during movement
+                    // Check intensity at nearby positions affected by flow
+                    float neighborIntensity = 0.0;
+                    for(float angle = 0.0; angle < 6.28; angle += 1.57) {
+                        vec2 checkPos = uv + vec2(cos(angle), sin(angle)) * pixelSize * 3.0;
+                        checkPos = clamp(checkPos, vec2(0.0), vec2(1.0));
+                        neighborIntensity += length(texture2D(u_texture, checkPos).rgb);
+                    }
+                    neighborIntensity *= 0.25;
+                    
+                    // When trails collide, create interaction ripple
+                    if (neighborIntensity > 0.3 && intensity > 0.3) {
+                        float interaction = sin(u_time * 2.0 + uv.x * 10.0) * 0.5 + 0.5;
+                        color.rgb += vec3(0.02) * interaction * (intensity * neighborIntensity);
+                    }
+                }
+                
+                // Varied fade rate per stroke based on spatial position
+                // Each region fades at slightly different rate (0.995 to 0.998)
+                vec2 spatialSeed = floor(uv * 50.0);
+                float fadeVariation = noise(spatialSeed * 0.1);
+                float fadeRate = 0.995 + fadeVariation * 0.003;
+                
+                color.rgb *= fadeRate;
+                color.rgb = max(color.rgb - 0.0005, 0.0);
+                
+                // Add new brush stroke if painting
+                if (u_painting == 1) {
+                    vec2 pos = gl_FragCoord.xy;
+                    
+                    // Check for hold-to-erase mode
+                    if (u_holding == 1) {
+                        // Expanding void eraser - grows over time (slower)
+                        float eraseRadius = 50.0 + u_holdDuration * 40.0; // Grows 40px per second (slowed down)
+                        float eraseDist = length(pos - u_mouse);
+                        
+                        // Gradual fade-in for smooth transition
+                        float fadeIn = smoothstep(0.0, 0.5, u_holdDuration); // Smooth ramp over 0.5 seconds
+                        
+                        if (eraseDist < eraseRadius) {
+                            // Create expanding void with smooth edges
+                            float eraseIntensity = 1.0 - smoothstep(eraseRadius * 0.6, eraseRadius, eraseDist);
+                            
+                            // Void effect - force to black with swirling distortion
+                            vec2 voidCoord = (pos - u_mouse) * 0.02 + u_time * 0.5;
+                            float voidNoise = fbm(voidCoord);
+                            
+                            // Gentler pulsing effect
+                            float pulse = 0.8 + 0.2 * sin(u_time * 2.0 + eraseDist * 0.08);
+                            eraseIntensity *= pulse;
+                            
+                            // Apply fade-in for smooth start
+                            eraseIntensity *= fadeIn;
+                            
+                            // Void consumes everything - darken to pure black
+                            float voidStrength = 0.85 * fadeIn; // Gradual strength buildup
+                            color.rgb = mix(color.rgb, vec3(0.0), eraseIntensity * voidStrength);
+                            
+                            // Add slight dark purple edge to the void
+                            if (eraseDist > eraseRadius * 0.8 && eraseDist < eraseRadius) {
+                                float edgeIntensity = smoothstep(eraseRadius * 0.8, eraseRadius * 0.95, eraseDist);
+                                color.rgb += vec3(0.1, 0.0, 0.15) * edgeIntensity * voidNoise * 0.3 * fadeIn;
+                            }
+                        }
+                        
+                        // Void spreads darkness to nearby areas continuously
+                        float spreadRadius = eraseRadius * 1.5;
+                        if (eraseDist < spreadRadius && eraseDist >= eraseRadius) {
+                            float spreadDist = (eraseDist - eraseRadius) / (spreadRadius - eraseRadius);
+                            float spreadIntensity = (1.0 - spreadDist) * 0.15 * fadeIn;
+                            color.rgb *= (1.0 - spreadIntensity);
+                        }
+                    } else {
+                        // Normal painting mode
+                        // Distance to mouse with velocity-based stretch
+                        vec2 mouseVelocity = u_mouse - u_prevMouse;
+                        float velocityMag = length(mouseVelocity);
+                        
+                        // Line segment distance for continuous strokes
+                        vec2 pa = pos - u_prevMouse;
+                        vec2 ba = u_mouse - u_prevMouse;
+                        float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+                        float dist = length(pa - ba * h);
+                        
+                        // Dynamic brush size based on velocity
+                        float brushSize = 40.0 + velocityMag * 0.8;
+                    
+                    if (dist < brushSize) {
+                        // Smooth falloff
+                        float intensity = 1.0 - smoothstep(0.0, brushSize, dist);
+                        intensity = pow(intensity, 1.2);
+                        
+                        // Procedural noise animation with flowing movement
+                        vec2 noiseCoord = pos * 0.01 + u_time * 0.3;
+                        float n1 = fbm(noiseCoord);
+                        float n2 = fbm(noiseCoord + vec2(5.3, 1.7));
+                        float n3 = fbm(noiseCoord * 0.5 - u_time * 0.2);
+                        
+                        // Color variation based on position and time
+                        float hue = fract(u_time * 0.05 + pos.x * 0.001);
+                        vec3 brushColor;
+                        
+                        if (hue < 0.33) {
+                            // Cyan to blue with shimmer
+                            brushColor = mix(
+                                vec3(0.0, 1.0, 1.0),
+                                vec3(0.3, 0.5, 1.0),
+                                n1
+                            );
+                        } else if (hue < 0.66) {
+                            // Magenta to purple with shimmer
+                            brushColor = mix(
+                                vec3(1.0, 0.0, 1.0),
+                                vec3(0.8, 0.2, 1.0),
+                                n1
+                            );
+                        } else {
+                            // Orange to pink with shimmer
+                            brushColor = mix(
+                                vec3(1.0, 0.5, 0.0),
+                                vec3(1.0, 0.2, 0.6),
+                                n1
+                            );
+                        }
+                        
+                        // Add procedural variation with shimmer
+                        brushColor *= 0.6 + 0.4 * n2;
+                        
+                        // Check if painting over very bright areas
+                        float existingIntensity = length(color.rgb);
+                        float maxChannel = max(max(color.r, color.g), color.b);
+                        bool isBrightArea = maxChannel > 0.7 || existingIntensity > 0.8;
+                        
+                        if (isBrightArea) {
+                            // In bright areas, new strokes darken/remove glow
+                            float darkenAmount = intensity * 0.9;
+                            color.rgb = mix(color.rgb, color.rgb * 0.1, darkenAmount);
+                            
+                            // Add slight color tint to show where you painted
+                            color.rgb = mix(color.rgb, brushColor * 0.3, intensity * 0.2);
+                        } else {
+                            // Normal painting in darker areas
+                            if (existingIntensity > 0.1) {
+                                // Trails react to each other - subtle color blending
+                                brushColor = mix(brushColor, color.rgb * 1.2, existingIntensity * 0.2);
+                                intensity *= 1.0 + existingIntensity * 0.15; // Reduced amplification
+                            }
+                            
+                            // Controlled glow effect
+                            float glow = intensity * 0.9;
+                            float corona = intensity * 0.2 * (0.8 + 0.2 * n3);
+                            
+                            color.rgb += brushColor * glow;
+                            
+                            // Add outer glow ring
+                            if (dist > brushSize * 0.5) {
+                                float ringIntensity = smoothstep(brushSize, brushSize * 0.5, dist);
+                                color.rgb += brushColor * corona * ringIntensity;
+                            }
+                        }
+                    }
+                    }
+                }
+                
+                // Ensure colors don't clip
+                color.rgb = clamp(color.rgb, 0.0, 1.0);
+                
+                // Convert overly bright/white areas to cyberpunk colors
+                float brightness = length(color.rgb);
+                float maxChannel = max(max(color.r, color.g), color.b);
+                float colorfulness = brightness > 0.0 ? (maxChannel - (color.r + color.g + color.b) / 3.0) : 0.0;
+                
+                // If too white/bright and lacking color saturation
+                if (brightness > 0.65 && colorfulness < 0.15) {
+                    // Choose cyberpunk color based on position
+                    vec2 colorSeed = floor(uv * 20.0);
+                    float colorChoice = noise(colorSeed * 0.3 + u_time * 0.01);
+                    
+                    vec3 targetColor;
+                    if (colorChoice < 0.33) {
+                        // Electric cyan
+                        targetColor = vec3(0.0, 0.9, 1.0);
+                    } else if (colorChoice < 0.66) {
+                        // Hot magenta
+                        targetColor = vec3(1.0, 0.0, 0.8);
+                    } else {
+                        // Neon purple
+                        targetColor = vec3(0.7, 0.2, 1.0);
+                    }
+                    
+                    // Blend toward cyberpunk color, maintaining brightness
+                    float remapAmount = smoothstep(0.65, 0.85, brightness) * smoothstep(0.15, 0.05, colorfulness);
+                    color.rgb = mix(color.rgb, targetColor * brightness, remapAmount * 0.7);
+                }
+                
+                gl_FragColor = vec4(color.rgb, 1.0);
+            }
+        `;
+
+        // Compile shader
+        function createShader(type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+                return null;
+            }
+            return shader;
+        }
+
+        // Create program
+        const vertexShader = createShader(gl.VERTEX_SHADER, vsSource);
+        const fragmentShader = createShader(gl.FRAGMENT_SHADER, fsSource);
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.error('Program link error:', gl.getProgramInfoLog(program));
+        }
+        gl.useProgram(program);
+
+        // Set up quad geometry
+        const vertices = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+        const vertexBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+        const positionLoc = gl.getAttribLocation(program, 'a_position');
+        gl.enableVertexAttribArray(positionLoc);
+        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+
+        // Create texture helper
+        function createTexture(width, height) {
+            const tex = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            return tex;
+        }
+
+        // Create framebuffer helper
+        function createFramebuffer(texture) {
+            const fb = gl.createFramebuffer();
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+            return fb;
+        }
+
+        // Ping-pong textures and framebuffers
+        let textures = [null, null];
+        let framebuffers = [null, null];
+        let currentIndex = 0;
+
+        function initTextures() {
+            // Clean up old textures
+            if (textures[0]) {
+                gl.deleteTexture(textures[0]);
+                gl.deleteTexture(textures[1]);
+                gl.deleteFramebuffer(framebuffers[0]);
+                gl.deleteFramebuffer(framebuffers[1]);
+            }
+            
+            textures[0] = createTexture(canvas.width, canvas.height);
+            textures[1] = createTexture(canvas.width, canvas.height);
+            framebuffers[0] = createFramebuffer(textures[0]);
+            framebuffers[1] = createFramebuffer(textures[1]);
+            
+            // Clear both textures to black
+            for (let i = 0; i < 2; i++) {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[i]);
+                gl.clearColor(0, 0, 0, 1);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+            }
+        }
+
+        // Resize canvas to window
+        function resizeCanvas() {
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            canvas.style.width = window.innerWidth + 'px';
+            canvas.style.height = window.innerHeight + 'px';
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            initTextures();
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Uniforms
+        const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
+        const timeLoc = gl.getUniformLocation(program, 'u_time');
+        const mouseLoc = gl.getUniformLocation(program, 'u_mouse');
+        const prevMouseLoc = gl.getUniformLocation(program, 'u_prevMouse');
+        const paintingLoc = gl.getUniformLocation(program, 'u_painting');
+        const holdingLoc = gl.getUniformLocation(program, 'u_holding');
+        const holdDurationLoc = gl.getUniformLocation(program, 'u_holdDuration');
+        const textureLoc = gl.getUniformLocation(program, 'u_texture');
+
+        // Input handling
+        let mouseX = 0, mouseY = 0;
+        let prevMouseX = 0, prevMouseY = 0;
+        let isPainting = false;
+        let holdStartTime = 0;
+        let holdPosition = { x: 0, y: 0 };
+        let isHolding = false;
+        const HOLD_THRESHOLD = 0.15; // seconds before hold activates (triggers earlier)
+
+        function updateMouse(e) {
+            const dpr = window.devicePixelRatio || 1;
+            prevMouseX = mouseX;
+            prevMouseY = mouseY;
+            mouseX = e.clientX * dpr;
+            mouseY = (canvas.clientHeight - e.clientY) * dpr; // Flip Y for WebGL
+            
+            // Check if brush is being held in place
+            if (isPainting) {
+                const dx = mouseX - holdPosition.x;
+                const dy = mouseY - holdPosition.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // If moved significantly, reset hold timer
+                if (distance > 10) {
+                    holdStartTime = performance.now();
+                    holdPosition.x = mouseX;
+                    holdPosition.y = mouseY;
+                    isHolding = false;
+                } else {
+                    // Check if held long enough
+                    const holdDuration = (performance.now() - holdStartTime) / 1000;
+                    if (holdDuration > HOLD_THRESHOLD) {
+                        isHolding = true;
+                    }
+                }
+            }
+        }
+
+        canvas.addEventListener('mousedown', (e) => {
+            isPainting = true;
+            updateMouse(e);
+            prevMouseX = mouseX;
+            prevMouseY = mouseY;
+            holdStartTime = performance.now();
+            holdPosition.x = mouseX;
+            holdPosition.y = mouseY;
+            isHolding = false;
+        });
+        canvas.addEventListener('mousemove', (e) => {
+            if (isPainting) updateMouse(e);
+        });
+        canvas.addEventListener('mouseup', () => {
+            isPainting = false;
+            isHolding = false;
+        });
+        canvas.addEventListener('mouseleave', () => {
+            isPainting = false;
+            isHolding = false;
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            isPainting = true;
+            updateMouse(e.touches[0]);
+            prevMouseX = mouseX;
+            prevMouseY = mouseY;
+            holdStartTime = performance.now();
+            holdPosition.x = mouseX;
+            holdPosition.y = mouseY;
+            isHolding = false;
+        });
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (isPainting) updateMouse(e.touches[0]);
+        });
+        canvas.addEventListener('touchend', () => {
+            isPainting = false;
+            isHolding = false;
+        });
+
+        // Animation loop
+        let startTime = performance.now();
+        function render() {
+            const time = (performance.now() - startTime) / 1000;
+            
+            // Read from current texture, write to next
+            const readIndex = currentIndex;
+            const writeIndex = 1 - currentIndex;
+            
+            // Calculate hold duration
+            const holdDuration = isHolding ? (performance.now() - holdStartTime) / 1000 - HOLD_THRESHOLD : 0;
+            
+            // Update uniforms
+            gl.uniform2f(resolutionLoc, canvas.width, canvas.height);
+            gl.uniform1f(timeLoc, time);
+            gl.uniform2f(mouseLoc, mouseX, mouseY);
+            gl.uniform2f(prevMouseLoc, prevMouseX, prevMouseY);
+            gl.uniform1i(paintingLoc, isPainting ? 1 : 0);
+            gl.uniform1i(holdingLoc, isHolding ? 1 : 0);
+            gl.uniform1f(holdDurationLoc, holdDuration);
+            gl.uniform1i(textureLoc, 0);
+
+            // Bind input texture
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, textures[readIndex]);
+            
+            // Render to output framebuffer
+            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[writeIndex]);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            // Render to screen
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.bindTexture(gl.TEXTURE_2D, textures[writeIndex]);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            // Swap buffers
+            currentIndex = writeIndex;
+
+            requestAnimationFrame(render);
+        }
+        render();
+    </script>
+</body>
+</html>
