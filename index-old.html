@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timelapse Brush Simulator (v0.1)</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            background-color: white;
+            cursor: crosshair;
+            touch-action: none; /* For touch devices */
+        }
+        .controls {
+            margin: 10px 0;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .controls input, .controls button, .controls select {
+            padding: 5px;
+            font-size: 14px;
+        }
+        .animation-controls {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .frame-display {
+            width: 50px;
+            text-align: center;
+        }
+        button {
+            background-color: #007aff;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056cc;
+        }
+        button:disabled {
+            background-color: #ccc;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/gifshot@0.4.5/dist/gifshot.min.js"></script>
+</head>
+<body>
+    <h1>Timelapse Brush Simulator (v0.1)</h1>
+    <h3>By Jaydz Dev</h3>
+    <p>Draw with customizable brushes, create dual effects, and animate frames with onion skinning.</p>
+
+    <!-- Main Canvas -->
+    <canvas id="canvas" width="800" height="600"></canvas>
+
+    <!-- Brush Controls -->
+    <div class="controls">
+        <label>Size: <input type="range" id="brushSize" min="1" max="50" value="30"></label>
+        <label>Opacity: <input type="range" id="brushOpacity" min="0.1" max="1" step="0.1" value="1"></label>
+        <label>Hardness: <input type="range" id="brushHardness" min="0" max="1" step="0.1" value="0.5"></label>
+        <label>Color: <input type="color" id="brushColor" value="#34b785"></label>
+        <label>Brush Type: 
+            <select id="brushType">
+                <option value="round">Round</option>
+                <option value="square" selected>Square</option>
+                <option value="textured">Textured</option>
+                <option value="oil">Oil</option>
+                <option value="blend">Blend</option>
+            </select>
+        </label>
+        <button id="enableDual">Enable Dual Brush</button>
+        <button id="clearCanvas">Clear</button>
+        <button id="export">Export PNG</button>
+    </div>
+
+    <!-- Animation Controls -->
+    <div class="animation-controls">
+        <button id="addFrame">Add Frame</button>
+        <button id="playAnimation">Play</button>
+        <button id="toggleOnion">Toggle Onion Skin</button>
+        <button id="exportGif">Export GIF</button>
+        <span class="frame-display">Frame: <span id="currentFrame">1</span> / <span id="totalFrames">1</span></span>
+        <input type="range" id="frameSlider" min="1" max="1" value="1" style="width: 200px;">
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true; // Smooth rendering
+
+        // Helper function to create a white frame
+        function createWhiteFrame() {
+            const imageData = ctx.createImageData(canvas.width, canvas.height);
+            const data = imageData.data;
+            // Fill with white (RGB: 255, 255, 255, Alpha: 255)
+            for (let i = 0; i < data.length; i += 4) {
+                data[i] = 255;     // Red
+                data[i + 1] = 255; // Green
+                data[i + 2] = 255; // Blue
+                data[i + 3] = 255; // Alpha
+            }
+            return imageData;
+        }
+
+        // Animation state
+        let frames = [createWhiteFrame()]; // Start with white frame
+        let currentFrameIndex = 0;
+        let isPlaying = false;
+        let onionSkin = true;
+        let animationInterval;
+
+        // Drawing state
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
+        let dualBrushEnabled = false;
+        let primaryBrush = { type: 'round', size: 10, opacity: 1, hardness: 0.5, color: '#000000' };
+        let secondaryBrush = { type: 'textured', size: 8, opacity: 1, hardness: 0.3, color: '#ffffff' };
+
+        // Update display
+        function updateFrameDisplay() {
+            document.getElementById('currentFrame').textContent = currentFrameIndex + 1;
+            document.getElementById('totalFrames').textContent = frames.length;
+            document.getElementById('frameSlider').max = frames.length;
+            document.getElementById('frameSlider').value = currentFrameIndex + 1;
+        }
+
+        // Switch frames
+        function switchFrame(index) {
+            // Clear canvas first
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw onion skin first (if enabled) using a temporary canvas
+            if (onionSkin && index > 0) {
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = canvas.width;
+                tempCanvas.height = canvas.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.putImageData(frames[index - 1], 0, 0);
+                ctx.globalAlpha = 0.3;
+                ctx.drawImage(tempCanvas, 0, 0);
+                ctx.globalAlpha = 1;
+            }
+            
+            // Draw current frame on top using drawImage to preserve onion skin
+            const currentCanvas = document.createElement('canvas');
+            currentCanvas.width = canvas.width;
+            currentCanvas.height = canvas.height;
+            const currentCtx = currentCanvas.getContext('2d');
+            currentCtx.putImageData(frames[index], 0, 0);
+            ctx.drawImage(currentCanvas, 0, 0);
+            
+            currentFrameIndex = index;
+            updateFrameDisplay();
+        }
+
+        // Drawing functions
+        function getBrushGradient(x, y, size, hardness, color) {
+            const gradient = ctx.createRadialGradient(x, y, 0, x, y, size);
+            gradient.addColorStop(0, color);
+            gradient.addColorStop(hardness, color);
+            gradient.addColorStop(1, color + '00'); // Fade to transparent
+            return gradient;
+        }
+
+        // Helper function to adjust color brightness
+        function adjustBrightness(color, amount) {
+            const hex = color.replace('#', '');
+            const r = Math.max(0, Math.min(255, parseInt(hex.substr(0, 2), 16) + amount));
+            const g = Math.max(0, Math.min(255, parseInt(hex.substr(2, 2), 16) + amount));
+            const b = Math.max(0, Math.min(255, parseInt(hex.substr(4, 2), 16) + amount));
+            return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+        }
+
+        function drawPixel(x, y, size, opacity, hardness, color, type, directionX = 0, directionY = 0) {
+            ctx.save();
+            ctx.globalAlpha = opacity;
+            const halfSize = size / 2;
+            if (type === 'round') {
+                ctx.beginPath();
+                ctx.arc(x, y, halfSize, 0, 2 * Math.PI);
+                ctx.fillStyle = color;
+                ctx.fill();
+            } else if (type === 'square') {
+                ctx.fillStyle = color;
+                ctx.fillRect(x - halfSize, y - halfSize, size, size);
+            } else if (type === 'textured') {
+                // Simple texture simulation: noise pattern
+                ctx.fillStyle = color;
+                for (let i = 0; i < 10; i++) {
+                    const tx = x + (Math.random() - 0.5) * size;
+                    const ty = y + (Math.random() - 0.5) * size;
+                    ctx.fillRect(tx, ty, size / 5, size / 5);
+                }
+            } else if (type === 'oil') {
+                // Oil brush: Square brush with blends colors and directional lighting effects
+                ctx.globalCompositeOperation = 'source-over';
+                
+                // Sample the underlying canvas color for blending
+                const imageData = ctx.getImageData(x - halfSize, y - halfSize, size, size);
+                
+                // Main brush stroke with base color (square)
+                ctx.globalAlpha = opacity * 0.6;
+                ctx.fillStyle = color;
+                ctx.fillRect(x - halfSize, y - halfSize, size, size);
+                
+                // Add directional edge highlights and shadows
+                const angle = Math.atan2(directionY, directionX);
+                
+                // Lighter edge on the leading side (square)
+                ctx.globalAlpha = opacity * 0.3;
+                const lightOffset = halfSize * 0.4;
+                const lightX = x + Math.cos(angle) * lightOffset;
+                const lightY = y + Math.sin(angle) * lightOffset;
+                const lightSize = size * 0.6;
+                ctx.fillStyle = adjustBrightness(color, 40);
+                ctx.fillRect(lightX - lightSize / 2, lightY - lightSize / 2, lightSize, lightSize);
+                
+                // Darker edge on the trailing side (square)
+                ctx.globalAlpha = opacity * 0.25;
+                const darkX = x - Math.cos(angle) * lightOffset;
+                const darkY = y - Math.sin(angle) * lightOffset;
+                const darkSize = size * 0.5;
+                ctx.fillStyle = adjustBrightness(color, -40);
+                ctx.fillRect(darkX - darkSize / 2, darkY - darkSize / 2, darkSize, darkSize);
+                
+                // Add some texture/grain
+                ctx.globalAlpha = opacity * 0.15;
+                for (let i = 0; i < 8; i++) {
+                    const tx = x + (Math.random() - 0.5) * size * 0.8;
+                    const ty = y + (Math.random() - 0.5) * size * 0.8;
+                    const tsize = size / 8;
+                    ctx.fillStyle = Math.random() > 0.5 ? adjustBrightness(color, 20) : adjustBrightness(color, -20);
+                    ctx.fillRect(tx, ty, tsize, tsize);
+                }
+            } else if (type === 'blend') {
+                // Blend brush: Mixes and smudges paint, creating new colors
+                const blendRadius = Math.floor(halfSize);
+                const sourceX = Math.max(0, Math.floor(x - blendRadius));
+                const sourceY = Math.max(0, Math.floor(y - blendRadius));
+                const blendSize = Math.min(size, canvas.width - sourceX, canvas.height - sourceY);
+                
+                if (blendSize > 0) {
+                    // Sample the current area and areas around it for color mixing
+                    const imageData = ctx.getImageData(sourceX, sourceY, blendSize, blendSize);
+                    const data = imageData.data;
+                    
+                    // Calculate average color in the brush area for mixing
+                    let totalR = 0, totalG = 0, totalB = 0, totalA = 0;
+                    let pixelCount = 0;
+                    
+                    for (let i = 0; i < data.length; i += 4) {
+                        const alpha = data[i + 3];
+                        if (alpha > 0) {
+                            totalR += data[i] * alpha;
+                            totalG += data[i + 1] * alpha;
+                            totalB += data[i + 2] * alpha;
+                            totalA += alpha;
+                            pixelCount++;
+                        }
+                    }
+                    
+                    if (totalA > 0) {
+                        // Calculate mixed color
+                        const avgR = Math.round(totalR / totalA);
+                        const avgG = Math.round(totalG / totalA);
+                        const avgB = Math.round(totalB / totalA);
+                        const mixedColor = `rgb(${avgR}, ${avgG}, ${avgB})`;
+                        
+                        // Calculate smudge direction
+                        const smudgeDistance = size * 0.4 * opacity;
+                        const angle = Math.atan2(directionY, directionX);
+                        const offsetX = Math.cos(angle) * smudgeDistance;
+                        const offsetY = Math.sin(angle) * smudgeDistance;
+                        
+                        // Apply the mixed color with a gradient effect
+                        ctx.globalCompositeOperation = 'source-over';
+                        
+                        // Draw several overlapping layers to create smooth color mixing
+                        for (let layer = 0; layer < 5; layer++) {
+                            const layerProgress = layer / 4;
+                            const layerX = x + offsetX * layerProgress;
+                            const layerY = y + offsetY * layerProgress;
+                            
+                            ctx.globalAlpha = opacity * (0.25 - layer * 0.03);
+                            ctx.fillStyle = mixedColor;
+                            ctx.beginPath();
+                            ctx.arc(layerX, layerY, halfSize * (0.9 - layer * 0.1), 0, 2 * Math.PI);
+                            ctx.fill();
+                        }
+                        
+                        // Also move some of the original pixels for texture
+                        ctx.globalAlpha = opacity * 0.4;
+                        ctx.putImageData(imageData, sourceX + offsetX * 0.7, sourceY + offsetY * 0.7);
+                    }
+                }
+            }
+            ctx.restore();
+        }
+
+        function drawStroke(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX || e.touches[0].clientX) - rect.left;
+            const y = (e.clientY || e.touches[0].clientY) - rect.top;
+
+            if (!isDrawing) {
+                lastX = x;
+                lastY = y;
+                return;
+            }
+
+            // Skip if lastX or lastY is null (new stroke)
+            if (lastX === null || lastY === null) {
+                lastX = x;
+                lastY = y;
+                return;
+            }
+
+            // Get current brush settings
+            primaryBrush.size = parseInt(document.getElementById('brushSize').value);
+            primaryBrush.opacity = parseFloat(document.getElementById('brushOpacity').value);
+            primaryBrush.hardness = parseFloat(document.getElementById('brushHardness').value);
+            primaryBrush.color = document.getElementById('brushColor').value;
+            primaryBrush.type = document.getElementById('brushType').value;
+
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            // Calculate brush direction for oil brush
+            const distance = Math.sqrt((x - lastX) ** 2 + (y - lastY) ** 2);
+            const directionX = distance > 0 ? (x - lastX) / distance : 0;
+            const directionY = distance > 0 ? (y - lastY) / distance : 0;
+
+            // Simple line drawing with interpolation
+            const steps = Math.max(1, distance / primaryBrush.size);
+            for (let i = 0; i <= steps; i++) {
+                const interpX = lastX + (x - lastX) * (i / steps);
+                const interpY = lastY + (y - lastY) * (i / steps);
+                drawPixel(interpX, interpY, primaryBrush.size, primaryBrush.opacity, primaryBrush.hardness, primaryBrush.color, primaryBrush.type, directionX, directionY);
+
+                // Dual brush: Overlay secondary brush at every step for better color mix
+                if (dualBrushEnabled) {
+                    drawPixel(interpX, interpY, secondaryBrush.size, secondaryBrush.opacity, secondaryBrush.hardness, secondaryBrush.color, secondaryBrush.type, directionX, directionY);
+                }
+            }
+
+            lastX = x;
+            lastY = y;
+        }
+
+        // Event listeners for drawing
+        function startDrawing(e) {
+            e.preventDefault();
+            isDrawing = true;
+            // Clear canvas and redraw current frame without onion skin
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.putImageData(frames[currentFrameIndex], 0, 0);
+            // Set lastX and lastY to the current position to start a fresh stroke
+            const rect = canvas.getBoundingClientRect();
+            lastX = (e.clientX || e.touches[0].clientX) - rect.left;
+            lastY = (e.clientY || e.touches[0].clientY) - rect.top;
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+            e.preventDefault();
+            drawStroke(e);
+        }
+
+        // Replace the existing stopDrawing function
+        function stopDrawing() {
+            if (!isDrawing) return;
+            isDrawing = false;
+            
+            // Save the current state
+            frames[currentFrameIndex] = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            
+            // Redraw with onion skin if enabled using a temporary canvas
+            if (onionSkin && currentFrameIndex > 0) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw previous frame with transparency
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = canvas.width;
+                tempCanvas.height = canvas.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.putImageData(frames[currentFrameIndex - 1], 0, 0);
+                ctx.globalAlpha = 0.3;
+                ctx.drawImage(tempCanvas, 0, 0);
+                ctx.globalAlpha = 1;
+                
+                // Draw current frame on top using drawImage to preserve onion skin
+                const currentCanvas = document.createElement('canvas');
+                currentCanvas.width = canvas.width;
+                currentCanvas.height = canvas.height;
+                const currentCtx = currentCanvas.getContext('2d');
+                currentCtx.putImageData(frames[currentFrameIndex], 0, 0);
+                ctx.drawImage(currentCanvas, 0, 0);
+            }
+            
+            // Reset lastX and lastY to prevent connecting to the next stroke
+            lastX = null;
+            lastY = null;
+        }
+
+        // Mouse events
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing);
+
+        // Touch events
+        canvas.addEventListener('touchstart', startDrawing);
+        canvas.addEventListener('touchmove', draw);
+        canvas.addEventListener('touchend', stopDrawing);
+
+        // Controls
+        document.getElementById('brushSize').addEventListener('input', () => { /* Live update via drawPixel */ });
+        document.getElementById('brushOpacity').addEventListener('input', () => { /* Live */ });
+        document.getElementById('brushHardness').addEventListener('input', () => { /* Live */ });
+        document.getElementById('brushColor').addEventListener('input', () => { /* Live */ });
+        document.getElementById('brushType').addEventListener('change', () => { /* Live */ });
+
+        document.getElementById('enableDual').addEventListener('click', (e) => {
+            dualBrushEnabled = !dualBrushEnabled;
+            e.target.textContent = dualBrushEnabled ? 'Disable Dual Brush' : 'Enable Dual Brush';
+            // Customize secondary brush via prompt for simplicity
+            if (dualBrushEnabled) {
+                secondaryBrush.color = prompt('Secondary color (hex)?', '#ffffff') || '#ffffff';
+            }
+        });
+
+        document.getElementById('clearCanvas').addEventListener('click', () => {
+            frames[currentFrameIndex] = createWhiteFrame();
+            switchFrame(currentFrameIndex); // Refresh view with onion skin
+        });
+
+        document.getElementById('export').addEventListener('click', () => {
+            const link = document.createElement('a');
+            link.download = 'timelapse-drawing.png';
+            link.href = canvas.toDataURL();
+            link.click();
+        });
+
+        // Animation
+        document.getElementById('addFrame').addEventListener('click', () => {
+            // Save current frame first (without onion skin)
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const currentCanvas = document.createElement('canvas');
+            currentCanvas.width = canvas.width;
+            currentCanvas.height = canvas.height;
+            const currentCtx = currentCanvas.getContext('2d');
+            currentCtx.putImageData(frames[currentFrameIndex], 0, 0);
+            ctx.drawImage(currentCanvas, 0, 0);
+            frames[currentFrameIndex] = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            
+            // Create a new white frame
+            const whiteFrame = createWhiteFrame();
+            frames.push(whiteFrame);
+            
+            // Switch to the new white frame
+            switchFrame(frames.length - 1);
+        });
+
+        document.getElementById('frameSlider').addEventListener('input', (e) => {
+            switchFrame(parseInt(e.target.value) - 1);
+        });
+
+        document.getElementById('playAnimation').addEventListener('click', () => {
+            if (isPlaying) {
+                clearInterval(animationInterval);
+                isPlaying = false;
+                document.getElementById('playAnimation').textContent = 'Play';
+                return;
+            }
+            isPlaying = true;
+            document.getElementById('playAnimation').textContent = 'Stop';
+            animationInterval = setInterval(() => {
+                currentFrameIndex = (currentFrameIndex + 1) % frames.length;
+                switchFrame(currentFrameIndex);
+            }, 100); // 10 FPS for smoother animation
+        });
+
+        document.getElementById('toggleOnion').addEventListener('click', (e) => {
+            onionSkin = !onionSkin;
+            e.target.textContent = onionSkin ? 'Disable Onion Skin' : 'Enable Onion Skin';
+            switchFrame(currentFrameIndex); // Refresh view
+        });
+
+        document.getElementById('exportGif').addEventListener('click', () => {
+            const button = document.getElementById('exportGif');
+            button.disabled = true;
+            button.textContent = 'Generating GIF...';
+            
+            // Convert frames to image array
+            const images = [];
+            for (let i = 0; i < frames.length; i++) {
+                // Create a temporary canvas for each frame
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = canvas.width;
+                tempCanvas.height = canvas.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.putImageData(frames[i], 0, 0);
+                images.push(tempCanvas.toDataURL('image/png'));
+            }
+            
+            // Create GIF using gifshot
+            gifshot.createGIF({
+                images: images,
+                gifWidth: canvas.width,
+                gifHeight: canvas.height,
+                interval: 0.1, // 0.1 seconds = 100ms between frames
+                numFrames: frames.length,
+                frameDuration: 2, // 2 = ~100ms per frame (10 FPS)
+                sampleInterval: 10,
+                numWorkers: 2
+            }, (obj) => {
+                if (!obj.error) {
+                    const link = document.createElement('a');
+                    link.download = 'animation.gif';
+                    link.href = obj.image;
+                    link.click();
+                    
+                    button.disabled = false;
+                    button.textContent = 'Export GIF';
+                } else {
+                    alert('Error creating GIF: ' + obj.error);
+                    button.disabled = false;
+                    button.textContent = 'Export GIF';
+                }
+            });
+        });
+
+        // Initialize
+        updateFrameDisplay();
+        switchFrame(0);
+        document.getElementById('toggleOnion').textContent = onionSkin ? 'Disable Onion Skin' : 'Enable Onion Skin';
+    </script>
+</body>
+</html>

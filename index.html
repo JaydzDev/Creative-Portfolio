@@ -1,0 +1,82 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jaydz Dev - Creative Portfolio</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Courier New', monospace; background: #0a0a0a; color: #00ff00; padding: 20px; line-height: 1.6; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        header { text-align: center; padding: 40px 0; border-bottom: 2px solid #00ff00; margin-bottom: 40px; }
+        h1 { font-size: 3em; margin-bottom: 10px; text-shadow: 0 0 10px #00ff00; }
+        .subtitle { font-size: 1.2em; color: #00cc00; }
+        .projects-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 30px; padding: 20px 0; }
+        .project-card { background: #111; border: 2px solid #00ff00; padding: 20px; transition: all 0.3s ease; cursor: pointer; text-decoration: none; color: inherit; display: block; }
+        .project-card:hover { background: #1a1a1a; box-shadow: 0 0 20px #00ff00; transform: translateY(-5px); }
+        .project-icon { font-size: 4em; text-align: center; margin-bottom: 15px; }
+        .project-title { font-size: 1.5em; margin-bottom: 10px; color: #00ff00; text-align: center; }
+        .project-description { font-size: 0.9em; color: #00cc00; text-align: center; line-height: 1.4; }
+        .project-tag { display: inline-block; margin-top: 10px; padding: 3px 8px; border: 1px solid #00ff00; font-size: 0.8em; color: #00ff00; }
+        footer { text-align: center; margin-top: 60px; padding-top: 20px; border-top: 2px solid #00ff00; color: #00cc00; }
+        .blink { animation: blink 1s infinite; }
+        @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>JAYDZ DEV<span class="blink">_</span></h1>
+            <p class="subtitle">// Creative Coder & Digital Artist</p>
+        </header>
+        <div class="projects-grid">
+            <a href="https://discord.gg/underpunks" target="_blank" class="project-card">
+                <div class="project-icon"></div>
+                <div class="project-title">Underpunks RPG</div>
+                <div class="project-description">The biggest simulated world on Discord. Explore, battle, and build in a massive multiplayer experience.</div>
+                <div class="project-tag">GAME DEV</div>
+            </a>
+            <a href="timelapse-brush/index.html" class="project-card">
+                <div class="project-icon"></div>
+                <div class="project-title">Timelapse Brush Simulator</div>
+                <div class="project-description">Interactive painting app with 30-stroke challenge mode. Create art and export animated timelapses.</div>
+                <div class="project-tag">WEB APP</div>
+            </a>
+            <div class="project-card" style="cursor: default; opacity: 0.7;">
+                <div class="project-icon"></div>
+                <div class="project-title">3D to 2D Render Engine</div>
+                <div class="project-description">Custom visual engine converting 3D scenes to 2D ASCII art for Discord bots.</div>
+                <div class="project-tag">ENGINE DEV</div>
+            </div>
+            <div class="project-card" style="cursor: default; opacity: 0.7;">
+                <div class="project-icon"></div>
+                <div class="project-title">Music Production</div>
+                <div class="project-description">Electronic music composition and sound design. Beats, ambience, and experimental audio.</div>
+                <div class="project-tag">AUDIO</div>
+            </div>
+            <div class="project-card" style="cursor: default; opacity: 0.7;">
+                <div class="project-icon"></div>
+                <div class="project-title">Animation</div>
+                <div class="project-description">Frame-by-frame animation and motion graphics. Bringing characters and ideas to life.</div>
+                <div class="project-tag">VISUAL</div>
+            </div>
+            <div class="project-card" style="cursor: default; opacity: 0.7;">
+                <div class="project-icon"></div>
+                <div class="project-title">Pixel Art</div>
+                <div class="project-description">Retro-style digital artwork. Sprites, scenes, and detailed pixel illustrations.</div>
+                <div class="project-tag">ART</div>
+            </div>
+            <div class="project-card" style="cursor: default; opacity: 0.7;">
+                <div class="project-icon"></div>
+                <div class="project-title">Writing</div>
+                <div class="project-description">Creative storytelling, world-building, and narrative design for games and beyond.</div>
+                <div class="project-tag">NARRATIVE</div>
+            </div>
+        </div>
+        <footer>
+            <p>&copy; 2025 Jaydz Dev // All Rights Reserved</p>
+            <p style="margin-top: 10px; font-size: 0.9em;">[ Building the future, one line at a time ]</p>
+        </footer>
+    </div>
+</body>
+</html>
