@@ -68,6 +68,28 @@
             background-color: #444;
             color: #888;
         }
+        .color-palette {
+            display: grid;
+            grid-template-columns: repeat(10, 1fr);
+            gap: 5px;
+            max-width: 370px;
+            margin: 5px 0;
+        }
+        .color-swatch {
+            width: 32px;
+            height: 32px;
+            border: 2px solid #444;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+        .color-swatch:hover {
+            transform: scale(1.1);
+            border-color: #0a84ff;
+        }
+        .color-swatch.selected {
+            border: 3px solid #0a84ff;
+            box-shadow: 0 0 5px #0a84ff;
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/gifshot@0.4.5/dist/gifshot.min.js"></script>
 </head>
@@ -94,8 +116,16 @@
         <label>Size: <input type="range" id="brushSize" min="1" max="50" value="30"></label>
         <label>Opacity: <input type="range" id="brushOpacity" min="0.1" max="1" step="0.1" value="1"></label>
         <label>Hardness: <input type="range" id="brushHardness" min="0" max="1" step="0.1" value="0.5"></label>
-        <label>Color: <input type="color" id="brushColor" value="#34b785"></label>
+    </div>
+    
+    <!-- Color Palette -->
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 10px 0;">
+        <label style="font-weight: bold;">Color Palette:</label>
+        <div class="color-palette" id="colorPalette"></div>
         <button id="eyedropper">🎨 Eyedropper</button>
+    </div>
+    
+    <div class="controls">
         <label>Brush Type: 
             <select id="brushType">
                 <option value="round">Round</option>
@@ -123,8 +153,9 @@
 
     <script>
         const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true, willReadFrequently: false });
         ctx.imageSmoothingEnabled = true; // Smooth rendering
+        ctx.imageSmoothingQuality = 'low'; // Performance over quality
 
         // Helper function to create a white frame
         function createWhiteFrame() {
@@ -152,8 +183,32 @@
         let lastX = 0;
         let lastY = 0;
         let dualBrushEnabled = false;
-        let primaryBrush = { type: 'round', size: 10, opacity: 1, hardness: 0.5, color: '#000000' };
-        let secondaryBrush = { type: 'textured', size: 8, opacity: 1, hardness: 0.3, color: '#ffffff' };
+        let primaryBrush = { type: 'round', size: 10, opacity: 1, hardness: 0.5, color: '#8d9855' };
+        let secondaryBrush = { type: 'textured', size: 8, opacity: 1, hardness: 0.3, color: '#ecf3b0' };
+
+        // Custom 20-color palette (sorted by hue/brightness)
+        const colorPalette = [
+            '#0c0f00', // Black
+            '#1c2025', // Dark Blue-Gray
+            '#2d3c56', // Dark Blue
+            '#536871', // Blue-Gray
+            '#548ca4', // Blue
+            '#879797', // Gray
+            '#8bb3c1', // Light Blue
+            '#b8ddd2', // Cyan
+            '#ecf3b0', // Light Yellow-Green
+            '#c8ad56', // Yellow
+            '#8d9855', // Olive Green
+            '#4b5431', // Dark Green
+            '#7a7b6b', // Gray-Green
+            '#40291c', // Dark Brown
+            '#672d20', // Brown
+            '#725336', // Medium Brown
+            '#953a2f', // Red-Brown
+            '#9f865b', // Tan
+            '#ac6b2f', // Orange-Brown
+            '#50486a'  // Purple-Gray
+        ];
 
         // Timelapse challenge state
         let timelapseMode = false;
@@ -288,6 +343,7 @@
                 ctx.fillStyle = color;
                 ctx.fill();
             } else if (type === 'square') {
+                // Simple square brush - fast and efficient
                 ctx.fillStyle = color;
                 ctx.fillRect(x - halfSize, y - halfSize, size, size);
             } else if (type === 'textured') {
@@ -426,7 +482,7 @@
             primaryBrush.size = parseInt(document.getElementById('brushSize').value);
             primaryBrush.opacity = parseFloat(document.getElementById('brushOpacity').value);
             primaryBrush.hardness = parseFloat(document.getElementById('brushHardness').value);
-            primaryBrush.color = document.getElementById('brushColor').value;
+            // Color is now managed by palette clicks, not input element
             primaryBrush.type = document.getElementById('brushType').value;
 
             ctx.lineCap = 'round';
@@ -437,8 +493,8 @@
             const directionX = distance > 0 ? (x - lastX) / distance : 0;
             const directionY = distance > 0 ? (y - lastY) / distance : 0;
 
-            // Simple line drawing with interpolation
-            const steps = Math.max(1, distance / primaryBrush.size);
+            // Smooth line drawing with optimized interpolation
+            const steps = Math.max(1, Math.ceil(distance / (primaryBrush.size * 0.5))); // Balanced speed/smoothness
             for (let i = 0; i <= steps; i++) {
                 const interpX = lastX + (x - lastX) * (i / steps);
                 const interpY = lastY + (y - lastY) * (i / steps);
@@ -474,9 +530,18 @@
                 // Convert to hex
                 const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
                 
-                // Set brush color
-                document.getElementById('brushColor').value = hex;
-                primaryBrush.color = hex;
+                // Set brush color and update palette selection
+                primaryBrush.color = hex.toUpperCase();
+                
+                // Try to select matching palette color if it exists
+                const swatches = document.querySelectorAll('.color-swatch');
+                swatches.forEach(swatch => {
+                    swatch.classList.remove('selected');
+                    if (swatch.style.backgroundColor.toUpperCase() === hex.toUpperCase() ||
+                        rgbToHex(swatch.style.backgroundColor).toUpperCase() === hex.toUpperCase()) {
+                        swatch.classList.add('selected');
+                    }
+                });
                 
                 // Exit eyedropper mode
                 eyedropperMode = false;
@@ -558,13 +623,13 @@
         }
 
         function draw(e) {
-            if (!isDrawing) return;
             e.preventDefault();
-            drawStroke(e);
+            if (isDrawing) {
+                drawStroke(e);
+            }
         }
 
-        // Replace the existing stopDrawing function
-        function stopDrawing() {
+        function stopDrawing(e) {
             if (!isDrawing) return;
             isDrawing = false;
             
@@ -630,16 +695,21 @@
         canvas.addEventListener('mouseup', stopDrawing);
         canvas.addEventListener('mouseout', stopDrawing);
 
-        // Touch events
-        canvas.addEventListener('touchstart', startDrawing);
-        canvas.addEventListener('touchmove', draw);
+        // Pointer events (includes touchpad pressure support)
+        canvas.addEventListener('pointerdown', startDrawing);
+        canvas.addEventListener('pointermove', draw);
+        canvas.addEventListener('pointerup', stopDrawing);
+        canvas.addEventListener('pointerout', stopDrawing);
+
+        // Touch events (for mobile/tablet with force touch)
+        canvas.addEventListener('touchstart', startDrawing, { passive: false });
+        canvas.addEventListener('touchmove', draw, { passive: false });
         canvas.addEventListener('touchend', stopDrawing);
 
         // Controls
         document.getElementById('brushSize').addEventListener('input', () => { /* Live update via drawPixel */ });
         document.getElementById('brushOpacity').addEventListener('input', () => { /* Live */ });
         document.getElementById('brushHardness').addEventListener('input', () => { /* Live */ });
-        document.getElementById('brushColor').addEventListener('input', () => { /* Live */ });
         document.getElementById('brushType').addEventListener('change', () => { /* Live */ });
 
         document.getElementById('enableDual').addEventListener('click', (e) => {
@@ -816,7 +886,41 @@
             });
         });
 
+        // Helper to convert RGB to hex
+        function rgbToHex(rgb) {
+            const match = rgb.match(/\d+/g);
+            if (!match) return rgb;
+            const r = parseInt(match[0]);
+            const g = parseInt(match[1]);
+            const b = parseInt(match[2]);
+            return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+        }
+
+        // Initialize color palette
+        function initColorPalette() {
+            const paletteContainer = document.getElementById('colorPalette');
+            colorPalette.forEach((color, index) => {
+                const swatch = document.createElement('div');
+                swatch.className = 'color-swatch';
+                swatch.style.backgroundColor = color;
+                swatch.title = color;
+                if (index === 10) swatch.classList.add('selected'); // Default olive green selected
+                
+                swatch.addEventListener('click', () => {
+                    // Remove previous selection
+                    document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
+                    swatch.classList.add('selected');
+                    
+                    // Update brush color
+                    primaryBrush.color = color;
+                });
+                
+                paletteContainer.appendChild(swatch);
+            });
+        }
+
         // Initialize
+        initColorPalette();
         updateFrameDisplay();
         switchFrame(0);
         document.getElementById('toggleOnion').textContent = onionSkin ? 'Disable Onion Skin' : 'Enable Onion Skin';
