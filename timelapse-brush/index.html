@@ -694,7 +694,7 @@
                     <option value="fill">Fill (f)</option>
                     <option value="texture" selected>Texture (t)</option>
                 </select>
-                <button id="loadTexture" style="padding: 2px 12px; font-size: 11px; white-space: nowrap; width: 100%; display: none;">🖼️ Load Texture</button>
+                <button id="loadTexture" style="padding: 2px 12px; font-size: 11px; white-space: nowrap; width: 100%; display: none;">🖼️ Load Stamp</button>
                 <input type="file" id="textureFileInput" accept=".png,.jpg,.jpeg" style="display: none;">
                 <button id="eyedropper" style="padding: 2px 12px; font-size: 11px; white-space: nowrap; width: 100%;">🎨 Eyedropper</button>
                 <div style="display: flex; gap: 4px;">
@@ -1439,6 +1439,10 @@
             initColorPalette();
             primaryBrush.color = grayscalePalette[19]; // Default to white
             
+            // Select the white swatch (index 19)
+            document.querySelectorAll('.color-swatch').forEach(swatch => swatch.classList.remove('selected'));
+            document.querySelectorAll('.color-swatch')[19].classList.add('selected');
+            
             // Resize canvas to 512x512
             canvas.width = stampWidth;
             canvas.height = stampHeight;
@@ -1480,6 +1484,29 @@
             // Update button
             document.getElementById('toggleStampMode').textContent = '✏️ Exit Stamp Mode';
             document.getElementById('toggleStampMode').style.background = 'linear-gradient(135deg, #f59fbe 0%, #f442a8 100%)';
+            
+            // If palette and controls are docked, switch to undocked layout
+            if (!paletteFloating) {
+                detachPalette();
+            }
+            if (!controlsFloating) {
+                detachControls();
+            }
+            
+            // Reposition floating boxes closer to the new smaller canvas
+            if (paletteFloating) {
+                const canvasRect = canvas.getBoundingClientRect();
+                const palette = document.getElementById('colorPalette');
+                const paletteWidth = palette.offsetWidth;
+                palette.style.left = (canvasRect.left - paletteWidth - 10) + 'px';
+                palette.style.top = '20px';
+            }
+            if (controlsFloating) {
+                const canvasRect = canvas.getBoundingClientRect();
+                const controls = document.getElementById('brushControls');
+                controls.style.left = (canvasRect.right + 10) + 'px';
+                controls.style.top = '20px';
+            }
         }
 
         function exitStampMode() {
@@ -1546,6 +1573,21 @@
             
             // Update display
             switchFrame(currentFrameIndex);
+            
+            // Reposition floating boxes to edges of enlarged canvas
+            if (paletteFloating) {
+                const canvasRect = canvas.getBoundingClientRect();
+                const palette = document.getElementById('colorPalette');
+                const paletteWidth = palette.offsetWidth;
+                palette.style.left = (canvasRect.left - paletteWidth - 10) + 'px';
+                palette.style.top = '20px';
+            }
+            if (controlsFloating) {
+                const canvasRect = canvas.getBoundingClientRect();
+                const controls = document.getElementById('brushControls');
+                controls.style.left = (canvasRect.right + 10) + 'px';
+                controls.style.top = '20px';
+            }
             
             // Restore UI elements
             document.getElementById('startTimelapse').style.display = '';
@@ -3058,6 +3100,16 @@ function switchFrame(index, saveCurrent = true) {
                     data[i] = 255; data[i + 1] = 255; data[i + 2] = 255; data[i + 3] = 255;
                 }
                 frames[currentFrameIndex] = imageData;
+            } else if (stampMode) {
+                // Create black frame for stamp mode
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = stampWidth;
+                tempCanvas.height = stampHeight;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.fillStyle = 'black';
+                tempCtx.fillRect(0, 0, stampWidth, stampHeight);
+                const imageData = tempCtx.getImageData(0, 0, stampWidth, stampHeight);
+                frames[currentFrameIndex] = imageData;
             } else {
                 frames[currentFrameIndex] = createWhiteFrame();
             }
@@ -3225,7 +3277,15 @@ function switchFrame(index, saveCurrent = true) {
 
         document.getElementById('export').addEventListener('click', () => {
             const link = document.createElement('a');
-            link.download = 'timelapse-drawing.png';
+            
+            // Dynamic filename based on current mode
+            if (stampMode) {
+                link.download = 'stamp-01.png';
+            } else if (pixelArtMode) {
+                link.download = 'pixel-art-01.png';
+            } else {
+                link.download = 'brush-drawing-01.png';
+            }
             
             if (pixelArtMode) {
                 // Export at native pixel art resolution
@@ -4663,7 +4723,7 @@ function switchFrame(index, saveCurrent = true) {
 
             <h4 style="font-size: 16px; color: #87baca; margin-top: 20px; margin-bottom: 8px;">Performance Considerations</h4>
             <ul style="font-size: 14px; color: #b8b8c8; line-height: 1.9;">
-                <li><strong>Canvas Reuse:</strong> Temporary canvas created per stamp rather than cached to avoid state pollution. V8 optimization recognizes allocation pattern and JIT-compiles efficient object pool.</li>
+                <li><strong>Canvas Reuse:</strong> Temporary canvas created per stamp rather than cached to avoid state pollution. V8 optimization recognises allocation pattern and JIT-compiles efficient object pool.</li>
                 <li><strong>Transform Overhead:</strong> 2D rotation matrix calculation (Math.atan2, translate, rotate) adds ~0.1ms per stamp on modern hardware - negligible for typical stroke densities (spacing ≥ 1.0).</li>
                 <li><strong>ImageData Manipulation:</strong> Black-to-transparent conversion is O(n) where n = width × height × 4 (RGBA). For 512×512 texture: ~1M operations, completes in <5ms on desktop CPUs. Performed once per texture load, not per stamp.</li>
                 <li><strong>Memory Profile:</strong> Each texture stored as Image object (~width × height × 4 bytes). 512×512 RGBA ≈ 1MB. Temporary canvases garbage collected after composition, preventing memory leaks during extended drawing sessions.</li>
@@ -4671,8 +4731,8 @@ function switchFrame(index, saveCurrent = true) {
 
             <h4 style="font-size: 16px; color: #87baca; margin-top: 20px; margin-bottom: 8px;">Comparison to Industry Implementations</h4>
             <ul style="font-size: 14px; color: #b8b8c8; line-height: 1.9;">
-                <li><strong>Procreate Valkyrie:</strong> Uses Metal compute shaders for GPU-accelerated texture stamping with real-time grain rotation and dual-texture layering. This Canvas 2D implementation replicates core concepts (stamp compositing, rotation, alpha preservation) using CPU rasterization - suitable for web context where GPU access is limited.</li>
-                <li><strong>Photoshop ABR:</strong> Supports multiple texture layers per brush tip with blend mode stacking and scatter matrices. This implementation focuses on single-texture workflow with manual layering via opacity buildup - appropriate for educational/demonstration context.</li>
+                <li><strong>Procreate Valkyrie:</strong> Uses Metal compute shaders for GPU-accelerated texture stamping with real-time grain rotation and dual-texture layering. This Canvas 2D implementation shares core concepts (stamp compositing, rotation, alpha preservation) using CPU rasterization - suitable for web context where GPU access is limited.</li>
+                <li><strong>Photoshop ABR:</strong> Supports multiple texture layers per brush tip with blend mode stacking and scatter matrices. This implementation only focuses on single-texture workflow with manual layering via opacity buildup - appropriate for educational/demonstration context.</li>
                 <li><strong>Krita Texture Brushes:</strong> Implements pattern offset and scale randomization for non-repetitive application. This demo includes rotation randomization; pattern offset could be added via random texture sampling coordinates (partial implementation ready in commented code).</li>
             </ul>
         </section>
@@ -4718,7 +4778,7 @@ function switchFrame(index, saveCurrent = true) {
                 <li><strong>Palette Architecture:</strong> Object array structure containing name metadata and 20-colour hex arrays for easy extensibility.</li>
                 <li><strong>Dynamic Switching:</strong> Modulo-based cycling through a number of curated palettes with automatic DOM regeneration and state preservation.</li>
                 <li><strong>Eyedropper Tool:</strong> Direct pixel sampling via getImageData() with hex conversion for colour picking from canvas content.</li>
-                <li><strong>Palettes Included:</strong> FARMLAND-20 (Eclipse89), ARTBOUND (Doph), Dungeon-20 (Meaghan), MixedBag[20] (SoundsDotZip), SOGGY 20 (green guy), ELEMENTAL (Space Sandwich), 20P DX (GrafxKid), mojave20 (magodellepercussioni), GRAY WEATHER (Cactus Celery).</li>
+                <li><strong>Palettes Included:</strong> FARMLAND-20 (Eclipse89), ARTBOUND (Doph), DUNGEON-20 (Meaghan), MIXEDBAG[20] (SoundsDotZip), SOGGY 20 (green guy), ELEMENTAL (Space Sandwich), 20P DX (GrafxKid), MOJAVE20 (magodellepercussioni), GRAY WEATHER (Cactus Celery).</li>
             </ul>
         </section>
 
@@ -4767,6 +4827,14 @@ function switchFrame(index, saveCurrent = true) {
                 <li><strong>Mode Switching:</strong> Automatic brush preset application (pixel art: hardness=1, spacing=0.1; oil: scatter=25).</li>
                 <li><strong>Memory Management:</strong> ImageData caching for frames with efficient data URL conversion for export operations.</li>
                 <li><strong>Colour Space Handling:</strong> RGB/hex conversion utilities with proper colour parsing for cross-format compatibility.</li>
+            </ul>
+        </section>
+
+        <section style="margin-bottom: 36px;">
+            <h3 style="font-size: 20px; color: #5a9ff5; margin-bottom: 12px; border-bottom: 2px solid rgba(90, 159, 245, 0.3); padding-bottom: 8px;">Debugging</h3>
+            <ul style="font-size: 14px; color: #b8b8c8; line-height: 1.9;">
+                <li><strong>Extensive Debugging:</strong> Something I take great satisfaction in mastering, as comprehensive debugging methodologies are critical to the reliability, performance, and reputation of any project.</li>
+                <li><strong>Onion Skinning:</strong> Debugging still in progress for frame-accurate animation visualization.</li>
             </ul>
         </section>
 
