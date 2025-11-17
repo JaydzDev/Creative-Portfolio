@@ -11,7 +11,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Timelapse Brush Simulator (v1.4.8)</title>
+    <title>Timelapse Brush Simulator</title>
     <style>
         body {
             margin: 0;
@@ -644,9 +644,13 @@
         }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/gifshot@0.4.5/dist/gifshot.min.js"></script>
+    <script>
+        const VERSION = "1.5.0";
+        document.title = "Timelapse Brush Simulator (v" + VERSION + ")";
+    </script>
 </head>
 <body>
-    <h1>Timelapse Brush Simulator (v1.4.8)</h1>
+    <h1>Timelapse Brush Simulator (v<span id="version-h1"></span>)</h1>
     <h3>By <a href="../index.html" style="color: #cd4ab7; text-decoration: none; transition: color 0.2s;">Jaydz Dev</a> [ <em>development time - 15 days</em> ]</h3>
     <p>Draw with customizable brushes, create dual effects, and animate frames with onion skinning.</br><span style="color: #89a3c2;">A tech demo</span> using Canvas 2D API, advanced brush dynamics, and gifshot generation.</br>There is a lot to unpack here, please see the documentation below or <span id="introPinIcon" style="color: #89a3c2; cursor: pointer;">click (📌) to change layout.</span></p>
     
@@ -4629,6 +4633,12 @@ function switchFrame(index, saveCurrent = true) {
             detachControls();
             updatePinIconText();
         });
+
+        // Set version in all places
+        window.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('version-h1').textContent = VERSION;
+            document.getElementById('version-footer').textContent = VERSION;
+        });
     </script>
 
     <!-- Technical Documentation -->
@@ -4840,7 +4850,7 @@ function switchFrame(index, saveCurrent = true) {
 
         <p style="font-size: 13px; color: #8a8d98; margin-top: 36px; padding-top: 24px; border-top: 1px solid rgba(90, 159, 245, 0.2); text-align: center;">
             <strong>Technologies:</strong> HTML5 Canvas 2D API, Vanilla JavaScript ES6+, gifshot (v0.4.5), CSS3 Gradients & Backdrop Filters<br>
-            <strong>License:</strong> MIT | <strong>Author:</strong> Jaydz Dev | <strong>Version:</strong> 0.1
+            <strong>License:</strong> MIT | <strong>Author:</strong> Jaydz Dev | <strong>Version:</strong> <span id="version-footer"></span>
         </p>
     </div>
 
